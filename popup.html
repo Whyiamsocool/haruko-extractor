@@ -37,8 +37,9 @@
       margin-bottom: 4px;
       margin-top: 10px;
     }
-    select, input[type="datetime-local"], input[type="number"] {
+    select, input[type="datetime-local"], input[type="date"], input[type="number"], input[type="text"] {
       width: 100%;
+      min-width: 0;
       padding: 8px 10px;
       background: #2a2d35;
       border: 1px solid #3a3d45;
@@ -46,6 +47,7 @@
       color: #e0e0e0;
       font-size: 13px;
       outline: none;
+      box-sizing: border-box;
     }
     select:focus, input:focus {
       border-color: #00d4aa;
@@ -55,7 +57,7 @@
       display: flex;
       gap: 8px;
     }
-    .row > * { flex: 1; }
+    .row > * { flex: 1; min-width: 0; }
 
     .section {
       background: #22252d;
@@ -164,6 +166,18 @@
       <option value="expand_asset">Expand by Asset — one row per asset per day</option>
       <option value="expand_account">Expand by Account — one row per asset per account per day</option>
     </select>
+
+    <div class="row" style="margin-top:10px;">
+      <div>
+        <label>From</label>
+        <input type="date" id="eodStartDate">
+      </div>
+      <div>
+        <label>To</label>
+        <input type="date" id="eodEndDate">
+      </div>
+    </div>
+    <div class="small-text">Leave blank for all available dates</div>
   </div>
 
   <!-- Date Range -->
@@ -187,12 +201,12 @@
     <div id="dateRange" class="hidden">
       <div class="row">
         <div>
-          <label>From (UTC)</label>
-          <input type="datetime-local" id="startDate">
+          <label>From</label>
+          <input type="date" id="startDate">
         </div>
         <div>
-          <label>To (UTC)</label>
-          <input type="datetime-local" id="endDate">
+          <label>To</label>
+          <input type="date" id="endDate">
         </div>
       </div>
     </div>

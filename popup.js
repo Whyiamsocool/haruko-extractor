@@ -42,8 +42,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Set default dates
   const now = new Date();
   const monthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
-  document.getElementById('endDate').value = toLocalDatetime(now);
-  document.getElementById('startDate').value = toLocalDatetime(monthAgo);
+  document.getElementById('endDate').value = now.toISOString().slice(0, 10);
+  document.getElementById('startDate').value = monthAgo.toISOString().slice(0, 10);
+
+  // Set default EOD dates
+  document.getElementById('eodEndDate').value = now.toISOString().slice(0, 10);
+  document.getElementById('eodStartDate').value = monthAgo.toISOString().slice(0, 10);
 });
 
 // ── UI Helpers ────────────────────────────────────────
@@ -76,10 +80,6 @@ function onDataTypeChange() {
   document.getElementById('dateSection').classList.toggle('hidden', isSnapshot || isTimeseries);
   document.getElementById('groupSection').classList.toggle('hidden', !isTimeseries);
   document.getElementById('accountSection').classList.toggle('hidden', isTimeseries);
-}
-
-function toLocalDatetime(date) {
-  return date.toISOString().slice(0, 16);
 }
 
 function toggleAllAccounts(checked) {
@@ -241,8 +241,8 @@ async function downloadData() {
     } else if (mode === 'latest') {
       allData = await fetchLatest(dataType, idsParam, count);
     } else {
-      const start = new Date(document.getElementById('startDate').value).getTime();
-      const end = new Date(document.getElementById('endDate').value).getTime();
+      const start = new Date(document.getElementById('startDate').value + 'T00:00:00Z').getTime();
+      const end = new Date(document.getElementById('endDate').value + 'T23:59:59Z').getTime();
       if (!start || !end) {
         setStatus('err', 'Please set both start and end dates.');
         document.getElementById('downloadBtn').disabled = false;
@@ -380,8 +380,20 @@ async function fetchTimeseries(dataType, group) {
   setProgress(20, 'Fetching timeseries data...');
   const resp = await apiFetch(url);
   const data = await resp.json();
-  const timeSeries = data.result?.timeSeries || [];
+  let timeSeries = data.result?.timeSeries || [];
   const detailLevel = document.getElementById('detailLevel').value;
+
+  // Filter by selected date range
+  const eodStart = document.getElementById('eodStartDate').value;
+  const eodEnd = document.getElementById('eodEndDate').value;
+  if (eodStart) {
+    const startMs = new Date(eodStart).getTime();
+    timeSeries = timeSeries.filter(e => e.timestamp >= startMs);
+  }
+  if (eodEnd) {
+    const endMs = new Date(eodEnd).getTime() + 86400000;
+    timeSeries = timeSeries.filter(e => e.timestamp < endMs);
+  }
 
   // Fetch live balances to detect margin collateral gaps
   setProgress(40, 'Fetching live balances for margin detection...');
