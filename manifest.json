@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Haruko Data Extractor",
+  "version": "1.0.0",
+  "description": "Extract transactions, trades, transfers, and positions from Haruko PMS",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": ["https://*.haruko.io/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.haruko.io/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
