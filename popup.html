@@ -144,13 +144,13 @@
   <div class="section">
     <div class="section-title">Data Type</div>
     <select id="dataType">
+      <option value="equity_timeseries" selected>Equity &amp; Holdings (Daily EOD)</option>
       <option value="wallet_transactions">On-Chain Transactions</option>
       <option value="trades">Trades</option>
       <option value="transfers">Transfers</option>
       <option value="balance_adjustments">Balance Adjustments</option>
       <option value="balance">Balances (Live Snapshot)</option>
       <option value="position">Positions (Live Snapshot)</option>
-      <option value="equity_timeseries">Equity &amp; Holdings (Daily EOD)</option>
     </select>
   </div>
 
@@ -162,9 +162,9 @@
 
     <label style="margin-top:10px;">Detail Level</label>
     <select id="detailLevel">
-      <option value="collapse">Collapse All — one row per day (totals only)</option>
+      <option value="expand_account" selected>Expand by Account — one row per asset per account per day</option>
       <option value="expand_asset">Expand by Asset — one row per asset per day</option>
-      <option value="expand_account">Expand by Account — one row per asset per account per day</option>
+      <option value="collapse">Collapse All — one row per day (totals only)</option>
     </select>
 
     <div class="row" style="margin-top:10px;">

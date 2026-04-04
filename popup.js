@@ -35,6 +35,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Event listeners
   document.getElementById('mode').addEventListener('change', toggleMode);
   document.getElementById('dataType').addEventListener('change', onDataTypeChange);
+  onDataTypeChange();
   document.getElementById('downloadBtn').addEventListener('click', downloadData);
   document.getElementById('selectAll').addEventListener('click', () => toggleAllAccounts(true));
   document.getElementById('clearAll').addEventListener('click', () => toggleAllAccounts(false));
