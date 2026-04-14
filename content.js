@@ -3,12 +3,16 @@
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getAuth') {
-    const token = sessionStorage.getItem('haruko_token');
+    let token = null;
+    try {
+      const raw = sessionStorage.getItem('haruko_token');
+      token = raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      // Token may be a plain string, not JSON
+      token = sessionStorage.getItem('haruko_token');
+    }
     const baseUrl = window.location.origin;
-    sendResponse({
-      token: token ? JSON.parse(token) : null,
-      baseUrl
-    });
+    sendResponse({ token, baseUrl });
   }
 
   if (request.action === 'getGroups') {
