@@ -51,6 +51,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('eodStartDate').value = monthAgo.toISOString().slice(0, 10);
 });
 
+function round6(v) { return Math.round(v * 1e6) / 1e6; }
+
 // ── UI Helpers ────────────────────────────────────────
 function setStatus(type, msg) {
   const el = document.getElementById('statusBar');
@@ -121,23 +123,29 @@ async function loadAccountsFallback() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     chrome.tabs.sendMessage(tab.id, { action: 'getGroups' }, async (resp) => {
-      const group = resp?.currentGroup || 'Open Eden Vault';
-      const summaryResp = await apiFetch(
-        `/cefi/api/summary?group=${encodeURIComponent(group)}&equitySummaryIncludeVenueAccounts=true&equitySummaryStartTs=90000000000000`
-      );
-      const summaryData = await summaryResp.json();
-      const result = summaryData.result || summaryData;
+      try {
+        const group = resp?.currentGroup || 'Open Eden Vault';
+        const summaryResp = await apiFetch(
+          `/cefi/api/summary?group=${encodeURIComponent(group)}&equitySummaryIncludeVenueAccounts=true&equitySummaryStartTs=90000000000000`
+        );
+        const summaryData = await summaryResp.json();
+        const result = summaryData.result || summaryData;
 
-      if (result.venueAccounts) {
-        venueAccounts = result.venueAccounts;
-        renderAccounts(result.venueAccounts);
-      } else if (result.equitySummary?.venueAccounts) {
-        venueAccounts = result.equitySummary.venueAccounts;
-        renderAccounts(result.equitySummary.venueAccounts);
-      } else {
-        const allAccounts = extractAccounts(result);
-        venueAccounts = allAccounts;
-        renderAccounts(allAccounts);
+        if (result.venueAccounts) {
+          venueAccounts = result.venueAccounts;
+          renderAccounts(result.venueAccounts);
+        } else if (result.equitySummary?.venueAccounts) {
+          venueAccounts = result.equitySummary.venueAccounts;
+          renderAccounts(result.equitySummary.venueAccounts);
+        } else {
+          const allAccounts = extractAccounts(result);
+          venueAccounts = allAccounts;
+          renderAccounts(allAccounts);
+        }
+      } catch (e) {
+        console.error('Failed to load accounts (fallback):', e);
+        document.getElementById('accountList').textContent =
+          'Could not load accounts. Make sure you are on a Group Summary page.';
       }
     });
   } catch (e) {
@@ -197,11 +205,15 @@ function renderAccounts(accounts) {
 }
 
 // ── API Fetch ─────────────────────────────────────────
-function apiFetch(path) {
+async function apiFetch(path) {
   const url = path.startsWith('http') ? path : baseUrl + path;
-  return fetch(url, {
+  const resp = await fetch(url, {
     headers: { 'Authorization': 'Bearer ' + authToken }
   });
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status} for ${path}`);
+  }
+  return resp;
 }
 
 // ── Download ──────────────────────────────────────────
@@ -211,7 +223,7 @@ async function downloadData() {
   const count = parseInt(document.getElementById('count').value) || 1000;
 
   // Get selected account IDs (not needed for timeseries)
-  const isTimeseries = dataType === 'equity_timeseries' || dataType === 'position_timeseries';
+  const isTimeseries = dataType === 'equity_timeseries';
   const selectedIds = Array.from(
     document.querySelectorAll('#accountList input[type="checkbox"]:checked')
   ).map(cb => cb.value);
@@ -228,7 +240,7 @@ async function downloadData() {
   try {
     let allData = [];
 
-    if (dataType === 'equity_timeseries' || dataType === 'position_timeseries') {
+    if (dataType === 'equity_timeseries') {
       const group = document.getElementById('groupName').value.trim();
       if (!group) {
         setStatus('err', 'Please enter a group name.');
@@ -242,14 +254,16 @@ async function downloadData() {
     } else if (mode === 'latest') {
       allData = await fetchLatest(dataType, idsParam, count);
     } else {
-      const start = new Date(document.getElementById('startDate').value + 'T00:00:00Z').getTime();
-      const end = new Date(document.getElementById('endDate').value + 'T23:59:59Z').getTime();
-      if (!start || !end) {
+      const startVal = document.getElementById('startDate').value;
+      const endVal = document.getElementById('endDate').value;
+      if (!startVal || !endVal) {
         setStatus('err', 'Please set both start and end dates.');
         document.getElementById('downloadBtn').disabled = false;
         hideProgress();
         return;
       }
+      const start = new Date(startVal + 'T00:00:00Z').getTime();
+      const end = new Date(endVal + 'T23:59:59Z').getTime();
       allData = await fetchHistorical(dataType, idsParam, start, end);
     }
 
@@ -429,9 +443,9 @@ async function fetchTimeseries(dataType, group) {
           // Position didn't exist at this date — no margin needed
         }
       }
-      marginCollateralUsd = Math.round(marginCollateralUsd * 100) / 100;
+      marginCollateralUsd = round6(marginCollateralUsd);
 
-      const adjustedEquityUsd = Math.round((snapshotEquity + marginCollateralUsd) * 100) / 100;
+      const adjustedEquityUsd = round6(snapshotEquity + marginCollateralUsd);
 
       if (detailLevel === 'collapse') {
         all.push({
@@ -456,7 +470,7 @@ async function fetchTimeseries(dataType, group) {
               quantity: asset.eq,
               refPx: asset.refPx,
               equityUsd: asset.eqUsd,
-              equityPct: Math.round(pct * 100) / 100,
+              equityPct: round6(pct),
               notionalUsd: '',
               changeQuantity: asset.chgEq,
               changeUsd: asset.chgEqUsd,
@@ -473,7 +487,7 @@ async function fetchTimeseries(dataType, group) {
             quantity: '',
             refPx: '',
             equityUsd: marginCollateralUsd,
-            equityPct: Math.round(pct * 100) / 100,
+            equityPct: round6(pct),
             notionalUsd: '',
             changeQuantity: '',
             changeUsd: '',
@@ -507,7 +521,7 @@ async function fetchTimeseries(dataType, group) {
               const ratio = m.marginUsd / Math.abs(m.positionQty * m.markPx);
               return s + Math.abs(pos.position * pos.mark) * ratio;
             }, 0);
-          const adjAcctEquity = acct.totalEquityUsd + Math.round(acctMargin * 100) / 100;
+          const adjAcctEquity = round6(acct.totalEquityUsd + acctMargin);
 
           for (const asset of acct.assets) {
             const pct = adjAcctEquity ? (asset.eqUsd / adjAcctEquity * 100) : 0;
@@ -523,7 +537,7 @@ async function fetchTimeseries(dataType, group) {
               quantity: asset.eq,
               refPx: asset.refPx,
               equityUsd: asset.eqUsd,
-              equityPct: Math.round(pct * 100) / 100,
+              equityPct: round6(pct),
               notionalUsd: '',
               changeQuantity: asset.chgEq,
               changeUsd: asset.chgEqUsd,
@@ -542,8 +556,8 @@ async function fetchTimeseries(dataType, group) {
               asset: 'Margin Collateral (est.)',
               quantity: '',
               refPx: '',
-              equityUsd: Math.round(acctMargin * 100) / 100,
-              equityPct: Math.round(pct * 100) / 100,
+              equityUsd: round6(acctMargin),
+              equityPct: round6(pct),
               notionalUsd: '',
               changeQuantity: '',
               changeUsd: '',
@@ -766,5 +780,5 @@ function downloadFile(content, filename) {
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
