@@ -324,71 +324,6 @@ async function fetchSnapshot(dataType, idsParam) {
   return extractEntries(data, dataType);
 }
 
-// Detect margin collateral by comparing live balances vs latest timeseries snapshot
-async function detectMarginCollateral(timeSeries) {
-  const latest = timeSeries[timeSeries.length - 1];
-  if (!latest) return [];
-
-  const accounts = latest.accountEquity || [];
-  if (accounts.length === 0) return [];
-
-  // Build map of timeseries balances per account per asset
-  const tsBalances = {};
-  for (const acct of accounts) {
-    tsBalances[acct.id] = {};
-    for (const asset of (acct.assets || [])) {
-      tsBalances[acct.id][asset.asset] = asset.eqUsd;
-    }
-  }
-
-  // Fetch live balances for all accounts
-  const accountIds = accounts.map(a => a.id).join(',');
-  const resp = await apiFetch(`/cefi/api/aggregate/balance?zeroBalances=false&venueAccountIds=${accountIds}`);
-  const data = await resp.json();
-  const liveBalances = data.result?.balances || [];
-
-  // Find gaps: live balance has equity but timeseries shows 0 or much less
-  const marginItems = [];
-  for (const va of liveBalances) {
-    const vaId = va.venueAccountId;
-    const tsAcct = tsBalances[vaId] || {};
-
-    for (const bal of (va.balances || [])) {
-      const liveUsd = bal.equityUsd || (bal.equity * (bal.refPx || 0));
-      const tsUsd = tsAcct[bal.asset] || 0;
-      const gap = liveUsd - tsUsd;
-
-      // If the gap is significant (>$100) — this is margin collateral
-      if (gap > 100) {
-        // Find which derivative position this margin supports
-        const positions = latest.equitySummary?.positions || [];
-        const relatedPos = positions.find(p =>
-          p.symbol.startsWith(bal.asset) || p.symbol.startsWith(bal.asset + '-')
-        );
-
-        marginItems.push({
-          accountId: vaId,
-          asset: bal.asset,
-          marginQty: bal.equity - (findTsQty(accounts, vaId, bal.asset)),
-          marginUsd: gap,
-          markPx: bal.refPx || 0,
-          symbol: relatedPos?.symbol || bal.asset + '-PERP',
-          positionQty: relatedPos?.position || 0,
-        });
-      }
-    }
-  }
-
-  return marginItems;
-}
-
-function findTsQty(accounts, vaId, asset) {
-  const acct = accounts.find(a => a.id === vaId);
-  if (!acct || !acct.assets) return 0;
-  const a = acct.assets.find(x => x.asset === asset);
-  return a ? a.eq : 0;
-}
-
 async function fetchTimeseries(dataType, group) {
   const url = `/cefi/api/group_summary_curve?group=${encodeURIComponent(group)}&includeAccountBreakdown=true&notionalType=DEFAULT&includePositions=true&refreshLiveBalances=false&includeEquity=true&pnlSource=DEFAULT`;
 
@@ -410,10 +345,6 @@ async function fetchTimeseries(dataType, group) {
     timeSeries = timeSeries.filter(e => e.timestamp < endMs);
   }
 
-  // Fetch live balances to detect margin collateral gaps
-  setProgress(40, 'Fetching live balances for margin detection...');
-  const marginData = await detectMarginCollateral(timeSeries);
-
   setProgress(60, `Processing ${timeSeries.length} daily snapshots...`);
 
   if (dataType === 'equity_timeseries') {
@@ -425,34 +356,14 @@ async function fetchTimeseries(dataType, group) {
       if (!summary) continue;
 
       const accounts = entry.accountEquity || [];
-      const snapshotEquity = accounts.length > 0
+      const totalEquityUsd = round6(accounts.length > 0
         ? accounts.reduce((sum, a) => sum + (a.totalEquityUsd || 0), 0)
-        : summary.totalEquityUsd;
-
-      // Calculate margin collateral for this entry using position data
-      // Margin collateral scales with position size × mark price per day
-      let marginCollateralUsd = 0;
-      for (const mg of marginData) {
-        // Find matching position in this entry's positions to scale historically
-        const pos = (summary.positions || []).find(p => p.symbol === mg.symbol);
-        if (pos) {
-          // Scale margin proportionally: (current margin / current position) × historical position
-          const ratio = mg.positionQty !== 0 ? mg.marginUsd / Math.abs(mg.positionQty * mg.markPx) : 0;
-          marginCollateralUsd += Math.abs(pos.position * pos.mark) * ratio;
-        } else {
-          // Position didn't exist at this date — no margin needed
-        }
-      }
-      marginCollateralUsd = round6(marginCollateralUsd);
-
-      const adjustedEquityUsd = round6(snapshotEquity + marginCollateralUsd);
+        : summary.totalEquityUsd);
 
       if (detailLevel === 'collapse') {
         all.push({
           date,
-          totalEquityUsd: adjustedEquityUsd,
-          snapshotEquityUsd: snapshotEquity,
-          marginCollateralUsd,
+          totalEquityUsd,
           changeUsd: summary.chgEqUsd,
           totalExposure: summary.totalExposure,
           leverage: summary.leverage,
@@ -461,10 +372,10 @@ async function fetchTimeseries(dataType, group) {
       } else if (detailLevel === 'expand_asset') {
         if (summary.assets) {
           for (const asset of summary.assets) {
-            const pct = adjustedEquityUsd ? (asset.eqUsd / adjustedEquityUsd * 100) : 0;
+            const pct = totalEquityUsd ? (asset.eqUsd / totalEquityUsd * 100) : 0;
             all.push({
               date,
-              totalEquityUsd: adjustedEquityUsd,
+              totalEquityUsd,
               type: 'spot',
               asset: asset.asset,
               quantity: asset.eq,
@@ -477,27 +388,11 @@ async function fetchTimeseries(dataType, group) {
             });
           }
         }
-        if (marginCollateralUsd > 0) {
-          const pct = adjustedEquityUsd ? (marginCollateralUsd / adjustedEquityUsd * 100) : 0;
-          all.push({
-            date,
-            totalEquityUsd: adjustedEquityUsd,
-            type: 'margin_collateral',
-            asset: 'Margin Collateral (est.)',
-            quantity: '',
-            refPx: '',
-            equityUsd: marginCollateralUsd,
-            equityPct: round6(pct),
-            notionalUsd: '',
-            changeQuantity: '',
-            changeUsd: '',
-          });
-        }
         if (summary.positions) {
           for (const pos of summary.positions) {
             all.push({
               date,
-              totalEquityUsd: adjustedEquityUsd,
+              totalEquityUsd,
               type: 'derivative_exposure',
               asset: pos.symbol,
               quantity: pos.position,
@@ -513,25 +408,17 @@ async function fetchTimeseries(dataType, group) {
       } else if (detailLevel === 'expand_account') {
         for (const acct of accounts) {
           if (!acct.assets) continue;
-          const acctMargin = marginData
-            .filter(m => m.accountId === acct.id)
-            .reduce((s, m) => {
-              const pos = (summary.positions || []).find(p => p.symbol === m.symbol);
-              if (!pos || m.positionQty === 0) return s;
-              const ratio = m.marginUsd / Math.abs(m.positionQty * m.markPx);
-              return s + Math.abs(pos.position * pos.mark) * ratio;
-            }, 0);
-          const adjAcctEquity = round6(acct.totalEquityUsd + acctMargin);
+          const acctEquityUsd = round6(acct.totalEquityUsd);
 
           for (const asset of acct.assets) {
-            const pct = adjAcctEquity ? (asset.eqUsd / adjAcctEquity * 100) : 0;
+            const pct = acctEquityUsd ? (asset.eqUsd / acctEquityUsd * 100) : 0;
             all.push({
               date,
               accountId: acct.id,
               accountName: acct.name,
               venue: acct.venue,
-              accountEquityUsd: adjAcctEquity,
-              totalEquityUsd: adjustedEquityUsd,
+              accountEquityUsd: acctEquityUsd,
+              totalEquityUsd,
               type: 'spot',
               asset: asset.asset,
               quantity: asset.eq,
@@ -541,26 +428,6 @@ async function fetchTimeseries(dataType, group) {
               notionalUsd: '',
               changeQuantity: asset.chgEq,
               changeUsd: asset.chgEqUsd,
-            });
-          }
-          if (acctMargin > 0) {
-            const pct = adjAcctEquity ? (acctMargin / adjAcctEquity * 100) : 0;
-            all.push({
-              date,
-              accountId: acct.id,
-              accountName: acct.name,
-              venue: acct.venue,
-              accountEquityUsd: adjAcctEquity,
-              totalEquityUsd: adjustedEquityUsd,
-              type: 'margin_collateral',
-              asset: 'Margin Collateral (est.)',
-              quantity: '',
-              refPx: '',
-              equityUsd: round6(acctMargin),
-              equityPct: round6(pct),
-              notionalUsd: '',
-              changeQuantity: '',
-              changeUsd: '',
             });
           }
         }
@@ -575,7 +442,7 @@ async function fetchTimeseries(dataType, group) {
               accountName: acctName,
               venue: pos.venue,
               accountEquityUsd: '',
-              totalEquityUsd: adjustedEquityUsd,
+              totalEquityUsd,
               type: 'derivative_exposure',
               asset: pos.symbol,
               quantity: pos.position,
